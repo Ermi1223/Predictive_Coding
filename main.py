@@ -1,51 +1,40 @@
-import torch
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn as nn
-import torch.optim as optim
 import os
-
-from models.predictive_net import PredictiveCodingNet
+import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 from train import train_epoch
 from validate import validate
+from models.predictive_net import PredictiveCodingNet
+from utils.visualization import plot_confusion_matrix
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
     transform = transforms.ToTensor()
+    train_dataset = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
 
-    train_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.MNIST(root="./data", train=True, transform=transform, download=True),
-        batch_size=64, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
 
-    test_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.MNIST(root="./data", train=False, transform=transform, download=True),
-        batch_size=256, shuffle=False)
+    model = PredictiveCodingNet().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    criterion = torch.nn.CrossEntropyLoss()
 
-    pcn = PredictiveCodingNet().to(device)
-    classifier = nn.Linear(64, 10).to(device)
+    epochs = 10
+    output_dir = "outputs"
+    os.makedirs(output_dir, exist_ok=True)
 
-    optimizer = optim.Adam(list(pcn.parameters()) + list(classifier.parameters()), lr=1e-3)
-    loss_fn = nn.CrossEntropyLoss()
+    for epoch in range(1, epochs + 1):
+        train_epoch(model, train_loader, optimizer, criterion, device, epoch, recurrent_steps=5)
 
-    best_acc = 0
-    os.makedirs("outputs", exist_ok=True)
+        accuracy = validate(model, test_loader, device, recurrent_steps=5, show_confusion=False)
 
-    for epoch in range(1, 6):
-        train_epoch(pcn, classifier, train_loader, optimizer, loss_fn, device, epoch)
-        acc = validate(
-            pcn, classifier, test_loader, device,
-            show_confusion=True,
-            save_path=f"outputs/conf_matrix_epoch_{epoch}.png"
-        )
-        if acc > best_acc:
-            best_acc = acc
-            torch.save({
-                'pcn': pcn.state_dict(),
-                'classifier': classifier.state_dict()
-            }, "best_model.pth")
-            print(f"✅ Best model saved with accuracy {acc:.2f}%")
+        print(f"Epoch {epoch} completed. Validation Accuracy: {accuracy:.4f}")
+
+        # Optionally save model checkpoint
+        torch.save(model.state_dict(), os.path.join(output_dir, f"pcn_epoch_{epoch}.pth"))
 
 if __name__ == "__main__":
     main()
